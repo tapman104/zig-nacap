@@ -168,4 +168,4 @@ examples/
 
 ## License
 
-MIT — see LICENSE file.
+[MIT](LICENSE)
