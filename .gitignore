@@ -1,0 +1,21 @@
+# Zig build artifacts
+.zig-cache/
+zig-out/
+
+# Object files and executables
+*.o
+*.exe
+
+# Dependency directories (if using zig build with external deps)
+deps/
+vendor/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS generated files
+.DS_Store
+Thumbs.db
