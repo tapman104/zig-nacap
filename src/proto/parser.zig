@@ -125,3 +125,28 @@ pub fn parseUdp(data: []const u8) ParseError!t.UdpDatagram {
         .payload  = data[8..],
     };
 }
+
+// -- ARP ----------------------------------------------------------------------
+
+pub fn parseArp(data: []const u8) ParseError!t.ArpPacket {
+    if (data.len < 28) return error.TooShort;
+    return .{
+        .operation  = @enumFromInt(std.mem.readInt(u16, data[6..8], .big)),
+        .sender_mac = data[8..14].*,
+        .sender_ip  = data[14..18].*,
+        .target_mac = data[18..24].*,
+        .target_ip  = data[24..28].*,
+    };
+}
+
+// -- ICMPv4 -------------------------------------------------------------------
+
+pub fn parseIcmp(data: []const u8) ParseError!t.IcmpMessage {
+    if (data.len < 4) return error.TooShort;
+    return .{
+        .type_   = data[0],
+        .code    = data[1],
+        .payload = data[4..],
+    };
+}
+
