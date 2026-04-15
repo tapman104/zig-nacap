@@ -139,13 +139,13 @@ pub fn main() !void {
     }
 }
 
-// ── Packet printer ────────────────────────────────────────────────────────────
+// ---------- Packet printer --------------------------------------------------
 
 fn printPacket(
     pkt: types.Packet,
     n: u32,
 ) !void {
-    std.debug.print("── Packet #{d} ─── {d} bytes (wire: {d}) ──\n",
+    std.debug.print("--- Packet #{d} --- {d} bytes (wire: {d}) ---\n",
         .{ n, pkt.data.len, pkt.original_len });
 
     // Try Ethernet
