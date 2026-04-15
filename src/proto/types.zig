@@ -133,3 +133,80 @@ pub fn formatIp6(ip: [16]u8, buf: []u8) []u8 {
     ) catch buf[0..0];
     return s;
 }
+
+// -- ARP ----------------------------------------------------------------------
+
+pub const ArpOp = enum(u16) {
+    request = 1,
+    reply   = 2,
+    _,
+};
+
+pub const ArpPacket = struct {
+    operation:  ArpOp,
+    sender_mac: MacAddr,
+    sender_ip:  [4]u8,
+    target_mac: MacAddr,
+    target_ip:  [4]u8,
+};
+
+// -- ICMPv4 -------------------------------------------------------------------
+
+pub const IcmpMessage = struct {
+    type_:   u8,
+    code:    u8,
+    payload: []const u8,
+};
+
+// -- DNS (lightweight hint types — zero-copy slices into packet data) ----------
+// Full parsed types with name buffers live in proto/dns.zig.
+
+pub const DnsQType = enum(u16) {
+    a     = 1,
+    ns    = 2,
+    cname = 5,
+    mx    = 15,
+    aaaa  = 28,
+    _,
+};
+
+pub const DnsQuestion = struct {
+    /// Decoded domain name e.g. "example.com" — slice into caller-provided buffer.
+    name:  []const u8,
+    type_: DnsQType,
+};
+
+pub const DnsMessage = struct {
+    id:        u16,
+    is_reply:  bool,
+    /// Slice into a caller-provided DnsQuestion buffer.
+    questions: []DnsQuestion,
+};
+
+// -- HTTP (lightweight hint — zero-copy slices into TCP payload) ---------------
+
+pub const HttpHint = struct {
+    /// "GET", "POST", "HTTP/1.1 200" etc. — slice into original packet data.
+    method:      []const u8,
+    /// Value of Host: header if present — slice into original packet data.
+    host:        ?[]const u8,
+    /// true if this looks like a response (starts with "HTTP/").
+    is_response: bool,
+};
+
+// -- Helper: format IPv6 address (word-grouped, uses fixedBufferStream) -------
+// Alias for formatIp6 using the canonical name expected by external callers.
+// buf must be at least 39 bytes.
+
+pub fn formatIpv6(ip: [16]u8, buf: []u8) []u8 {
+    var fbs = std.io.fixedBufferStream(buf);
+    const w = fbs.writer();
+    var i: usize = 0;
+    while (i < 16) : (i += 2) {
+        if (i > 0) w.writeByte(':') catch {};
+        const word = std.mem.readInt(u16, ip[i..][0..2], .big);
+        std.fmt.format(w, "{x:0>4}", .{word}) catch {};
+    }
+    return buf[0..fbs.pos];
+}
+
