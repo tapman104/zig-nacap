@@ -6,6 +6,7 @@
 // -----------------------------------------------------------------------------
 
 const std = @import("std");
+const t   = @import("types.zig");
 
 pub const ParseError = error{
     TooShort,
@@ -65,7 +66,7 @@ pub fn parseHttp(data: []const u8) ParseError!HttpMessage {
 
     // Find end of first line (CRLF or LF)
     const eol = std.mem.indexOfScalar(u8, data, '\n') orelse return error.NotHttp;
-    const line = std.mem.trimRight(u8, data[0..eol], "\r");
+    const line = std.mem.trimEnd(u8, data[0..eol], "\r");
 
     // Split into at most 3 whitespace-separated tokens
     var it = std.mem.splitScalar(u8, line, ' ');
@@ -94,4 +95,41 @@ pub fn parseHttp(data: []const u8) ParseError!HttpMessage {
     }
 
     return error.NotHttp;
+}
+
+// -- Convenience hint detector (used by examples) ----------------------------
+
+/// Quick passive hint for traffic inspection on port 80/8080.
+/// Returns null if `data` does not begin with a recognised HTTP/1.x line.
+/// The `method` field holds the entire first request/status line
+/// (e.g. "GET /index.html HTTP/1.1" or "HTTP/1.1 200 OK").
+/// All slices point into the original `data` — zero-copy.
+pub fn detect(data: []const u8) ?t.HttpHint {
+    const msg = parseHttp(data) catch return null;
+    const eol = std.mem.indexOfScalar(u8, data, '\n') orelse data.len;
+    const first_line = std.mem.trimEnd(u8, data[0..eol], "\r");
+    const host = findHeader(data, "Host:");
+    return switch (msg) {
+        .request  => .{ .method = first_line, .host = host, .is_response = false },
+        .response => .{ .method = first_line, .host = host, .is_response = true  },
+    };
+}
+
+/// Case-insensitive header value scanner.
+/// Scans past the blank-line separator — searches only in headers.
+fn findHeader(data: []const u8, name: []const u8) ?[]const u8 {
+    var i: usize = 0;
+    while (i < data.len) {
+        const line_end = std.mem.indexOf(u8, data[i..], "\r\n") orelse break;
+        const line = data[i .. i + line_end];
+        // End of headers
+        if (line.len == 0) break;
+        if (line.len >= name.len and
+            std.ascii.eqlIgnoreCase(line[0..name.len], name))
+        {
+            return std.mem.trimStart(u8, line[name.len..], " \t");
+        }
+        i += line_end + 2;
+    }
+    return null;
 }

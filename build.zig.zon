@@ -1,0 +1,16 @@
+.{
+    .fingerprint = 0xf33d632780762a05,
+    .name    = .npcap_zig,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+
+    .dependencies = .{},
+
+    .paths = .{
+        "src",
+        "examples",
+        "build.zig",
+        "build.zig.zon",
+        "README.md",
+    },
+}

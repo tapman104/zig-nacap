@@ -1,57 +1,78 @@
 const std = @import("std");
 
+// Npcap SDK paths — install SDK from https://npcap.com/dist/npcap-sdk-1.13.zip
+// and extract to C:\npcap-sdk (the default search position).
+const npcap_include: std.Build.LazyPath = .{ .cwd_relative = "C:/npcap-sdk/Include" };
+const npcap_lib_dir: std.Build.LazyPath = .{ .cwd_relative = "C:/npcap-sdk/Lib/x64" };
+
 pub fn build(b: *std.Build) void {
-    const target = std.Build.standardTargetOptions(b, .{});
-    const optimize = std.Build.standardOptimizeOption(b, .{});
+    const target   = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
 
-    const include_path = std.Build.LazyPath{ .cwd_relative = "C:/npcap-sdk/Include" };
-    const lib_path = std.Build.LazyPath{ .cwd_relative = "C:/npcap-sdk/Lib/x64" };
+    // ── Shared library module (also the public module for downstream consumers) ─
+    const lib_mod = b.addModule("npcap_zig", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target           = target,
+        .optimize         = optimize,
+    });
+    lib_mod.addIncludePath(npcap_include);
+    lib_mod.addLibraryPath(npcap_lib_dir);
+    lib_mod.linkSystemLibrary("wpcap",  .{});
+    lib_mod.linkSystemLibrary("Packet", .{});
+    lib_mod.link_libc = true;
 
-    // ── Library ────────────────────────────────────────────────────────────
-    // Create a Module for the Zig wrapper and register it as a library.
-    const lib_module = std.Build.addModule(b, "npcap-zig", .{
-        .root_source_file = std.Build.path(b, "capture.zig"),
-        .target = target,
-        .optimize = optimize,
+    // ── Static library artifact ───────────────────────────────────────────────
+    const lib = b.addLibrary(.{
+        .name        = "npcap_zig",
+        .linkage     = .static,
+        .root_module = lib_mod,
+    });
+    b.installArtifact(lib);
+
+    // ── Example: basic_capture ────────────────────────────────────────────────
+    const basic_mod = b.createModule(.{
+        .root_source_file = b.path("examples/basic_capture.zig"),
+        .target           = target,
+        .optimize         = optimize,
+    });
+    basic_mod.addImport("npcap_zig", lib_mod);
+    basic_mod.link_libc = true;
+
+    const basic = b.addExecutable(.{
+        .name        = "basic_capture",
+        .root_module = basic_mod,
+    });
+    b.installArtifact(basic);
+
+    const run_basic = b.addRunArtifact(basic);
+    const run_step  = b.step("run", "Run basic_capture example");
+    run_step.dependOn(&run_basic.step);
+
+    // ── Example: dns_monitor ──────────────────────────────────────────────────
+    const dns_mod = b.createModule(.{
+        .root_source_file = b.path("examples/dns_monitor.zig"),
+        .target           = target,
+        .optimize         = optimize,
+    });
+    dns_mod.addImport("npcap_zig", lib_mod);
+    dns_mod.link_libc = true;
+
+    const dns_mon = b.addExecutable(.{
+        .name        = "dns_monitor",
+        .root_module = dns_mod,
+    });
+    b.installArtifact(dns_mon);
+
+    const run_dns  = b.addRunArtifact(dns_mon);
+    const dns_step = b.step("dns_monitor", "Run dns_monitor example");
+    dns_step.dependOn(&run_dns.step);
+
+    // ── Tests ─────────────────────────────────────────────────────────────────
+    // Tests reuse lib_mod so they inherit the Npcap SDK paths and libc.
+    const tests = b.addTest(.{
+        .root_module = lib_mod,
     });
 
-    // Npcap SDK paths (default install location)
-    // Install Npcap SDK from https://npcap.com/dist/npcap-sdk-1.13.zip
-    // and extract to C:/npcap-sdk
-    // Keep the module as a pure Zig wrapper: only add include path here.
-    std.Build.Module.addIncludePath(lib_module, include_path);
-
-    const lib = std.Build.addLibrary(b, .{
-        .name = "npcap-zig",
-        .root_module = lib_module,
-    });
-
-    std.Build.installArtifact(b, lib);
-
-    // ── CLI demo executable ────────────────────────────────────────────────
-    const exe_module = std.Build.addModule(b, "sniffer-main", .{
-        .root_source_file = std.Build.path(b, "main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const exe = std.Build.addExecutable(b, .{
-        .name = "sniffer",
-        .root_module = exe_module,
-    });
-
-    std.Build.Module.addIncludePath(exe_module, include_path);
-    std.Build.Module.addLibraryPath(exe_module, lib_path);
-    std.Build.Module.linkSystemLibrary(exe_module, "wpcap", .{});
-    std.Build.Module.linkSystemLibrary(exe_module, "Packet", .{});
-    // Request linking libc for the executable when appropriate
-    exe_module.link_libc = true;
-
-    std.Build.installArtifact(b, exe);
-
-    // ── Run step ──────────────────────────────────────────────────────────
-    const run_cmd = std.Build.addRunArtifact(b, exe);
-    run_cmd.step.dependOn(std.Build.getInstallStep(b));
-    const run_step = std.Build.step(b, "run", "Run the sniffer demo");
-    run_step.dependOn(&run_cmd.step);
+    const test_step = b.step("test", "Run library tests");
+    test_step.dependOn(&b.addRunArtifact(tests).step);
 }

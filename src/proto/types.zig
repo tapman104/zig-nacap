@@ -199,14 +199,17 @@ pub const HttpHint = struct {
 // buf must be at least 39 bytes.
 
 pub fn formatIpv6(ip: [16]u8, buf: []u8) []u8 {
-    var fbs = std.io.fixedBufferStream(buf);
-    const w = fbs.writer();
+    var pos: usize = 0;
     var i: usize = 0;
     while (i < 16) : (i += 2) {
-        if (i > 0) w.writeByte(':') catch {};
+        if (i > 0 and pos < buf.len) {
+            buf[pos] = ':';
+            pos += 1;
+        }
         const word = std.mem.readInt(u16, ip[i..][0..2], .big);
-        std.fmt.format(w, "{x:0>4}", .{word}) catch {};
+        const s = std.fmt.bufPrint(buf[pos..], "{x:0>4}", .{word}) catch break;
+        pos += s.len;
     }
-    return buf[0..fbs.pos];
+    return buf[0..pos];
 }
 
