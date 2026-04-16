@@ -37,11 +37,16 @@ pub fn parseIpv4(data: []const u8) ParseError!t.Ipv4Header {
     const version = version_ihl >> 4;
     if (version != 4) return error.InvalidHeader;
 
-    const ihl = (version_ihl & 0x0F) * 4;
-    if (data.len < ihl) return error.TooShort;
+    const ihl: usize = (version_ihl & 0x0F) * 4;
+    if (ihl < 20 or data.len < ihl) return error.TooShort;
 
     const total_len = std.mem.readInt(u16, data[2..4], .big);
-    const payload_end = @min(total_len, data.len);
+    // total_len includes the header itself — payload starts after ihl
+    // guard against malformed packets where total_len < ihl
+    const payload_end = if (@as(usize, total_len) > ihl)
+        @min(@as(usize, total_len), data.len)
+    else
+        data.len;
 
     return .{
         .src     = data[12..16].*,
