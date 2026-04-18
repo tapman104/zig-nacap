@@ -182,19 +182,91 @@ fn printPacket(pkt: types.Packet, n: u32) void {
         return;
     };
 
+    var payload = eth.payload;
+    var etype = eth.ether_type;
+    var is_first = true;
+
     var m1: [17]u8 = undefined;
     var m2: [17]u8 = undefined;
-    std.debug.print("  ETH  {s} -> {s}  type=0x{x:0>4}\n", .{
+    std.debug.print("  ETH  {s} -> {s}  type=0x{x:0>4}", .{
         types.formatMac(eth.src, &m1),
         types.formatMac(eth.dst, &m2),
-        @intFromEnum(eth.ether_type),
+        @intFromEnum(etype),
     });
 
-    switch (eth.ether_type) {
-        .arp  => printArp(eth.payload),
-        .ipv4 => printIpv4(pkt, eth.payload),
-        .ipv6 => printIpv6(pkt, eth.payload),
-        else  => {},
+    while (true) {
+        switch (etype) {
+            .arp => {
+                if (is_first) std.debug.print("\n", .{});
+                printArp(payload);
+                break;
+            },
+            .ipv4 => {
+                if (is_first) std.debug.print("\n", .{});
+                printIpv4(pkt, payload);
+                break;
+            },
+            .ipv6 => {
+                if (is_first) std.debug.print("\n", .{});
+                printIpv6(pkt, payload);
+                break;
+            },
+            .vlan => {
+                if (payload.len < 4) {
+                    std.debug.print("  [VLAN too short]\n", .{});
+                    break;
+                }
+                const tci = std.mem.readInt(u16, payload[0..2], .big);
+                std.debug.print("  vlan={d}\n", .{tci & 0x0FFF});
+                const next_etype = std.mem.readInt(u16, payload[2..4], .big);
+                etype = @enumFromInt(next_etype);
+                payload = payload[4..];
+                is_first = false;
+            },
+            .lldp => {
+                if (is_first) std.debug.print("\n", .{});
+                std.debug.print("  [LLDP]\n", .{});
+                break;
+            },
+            .mpls => {
+                if (is_first) std.debug.print("\n", .{});
+                std.debug.print("  [MPLS]\n", .{});
+                break;
+            },
+            .qinq => {
+                if (is_first) std.debug.print("\n", .{});
+                std.debug.print("  [QinQ]\n", .{});
+                break;
+            },
+            .eth_loop => {
+                if (is_first) std.debug.print("\n", .{});
+                std.debug.print("  [ETH_LOOP]\n", .{});
+                break;
+            },
+            else => {
+                if (is_first) std.debug.print("\n", .{});
+                const unk_frame = types.EthernetFrame{
+                    .src = eth.src,
+                    .dst = eth.dst,
+                    .ether_type = etype,
+                    .payload = payload,
+                };
+                const unk = parser.parseUnknownEth(unk_frame);
+                
+                std.debug.print("  raw[{d}]: ", .{unk.raw_len});
+                var i: usize = 0;
+                while (i < unk.raw_len) : (i += 1) {
+                    std.debug.print("{x:0>2}", .{unk.raw[i]});
+                    if (i == 7 and i < unk.raw_len - 1) {
+                        std.debug.print("  ", .{});
+                    } else if (i < unk.raw_len - 1) {
+                        std.debug.print(" ", .{});
+                    }
+                }
+                std.debug.print("\n", .{});
+                break;
+            },
+        }
     }
 
     std.debug.print("\n", .{});
