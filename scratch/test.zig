@@ -1,0 +1,1 @@
+const std = @import("std"); pub const MyEnum = enum(u16) { a=1, b=2, _, }; pub fn main() !void { const x: u16 = 3; const y: MyEnum = @enumFromInt(x); switch (y) { .a => std.debug.print("a\n", .{}), .b => std.debug.print("b\n", .{}), else => std.debug.print("else\n", .{}), } }

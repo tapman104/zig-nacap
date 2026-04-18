@@ -243,8 +243,11 @@ fn printPacket(pkt: types.Packet, n: u32) void {
                 std.debug.print("  [ETH_LOOP]\n", .{});
                 break;
             },
-            else => {
-                if (is_first) std.debug.print("\n", .{});
+            _ => {
+                if (is_first) std.debug.print("  [UNKNOWN]\n", .{});
+                // DEBUG print per user instructions
+                std.debug.print("  [DEBUG: HIT CATCH-ALL payload.len={d}]\n", .{payload.len});
+                
                 const unk_frame = types.EthernetFrame{
                     .src = eth.src,
                     .dst = eth.dst,
@@ -254,13 +257,17 @@ fn printPacket(pkt: types.Packet, n: u32) void {
                 const unk = parser.parseUnknownEth(unk_frame);
                 
                 std.debug.print("  raw[{d}]: ", .{unk.raw_len});
-                var i: usize = 0;
-                while (i < unk.raw_len) : (i += 1) {
-                    std.debug.print("{x:0>2}", .{unk.raw[i]});
-                    if (i == 7 and i < unk.raw_len - 1) {
-                        std.debug.print("  ", .{});
-                    } else if (i < unk.raw_len - 1) {
-                        std.debug.print(" ", .{});
+                if (unk.raw_len == 0) {
+                    std.debug.print("(empty payload)", .{});
+                } else {
+                    var i: usize = 0;
+                    while (i < unk.raw_len) : (i += 1) {
+                        std.debug.print("{x:0>2}", .{unk.raw[i]});
+                        if (i == 7 and i < unk.raw_len - 1) {
+                            std.debug.print("  ", .{});
+                        } else if (i < unk.raw_len - 1) {
+                            std.debug.print(" ", .{});
+                        }
                     }
                 }
                 std.debug.print("\n", .{});
