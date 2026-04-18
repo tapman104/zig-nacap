@@ -1,4 +1,4 @@
-# npcap\_zig
+# npcap_zig
 
 Idiomatic Zig 0.16 wrapper for [Npcap](https://npcap.com/) on Windows.
 
@@ -14,7 +14,7 @@ No libc, no C++ headers, no global state leaking into userspace.
 | **OS** | Windows 10 / 11 (64-bit) |
 | **Npcap** | [npcap.com](https://npcap.com/#download) — must be installed before running |
 | **Npcap SDK** | [npcap-sdk-1.13.zip](https://npcap.com/dist/npcap-sdk-1.13.zip) extracted to `C:\npcap-sdk` |
-| **Zig** | 0.16.0 or newer |
+| **Zig** | 0.16.0 |
 | **Privileges** | Run executables **as Administrator** |
 
 ---
@@ -50,8 +50,7 @@ exe.root_module.addImport("npcap_zig", npcap_dep.module("npcap_zig"));
 const std       = @import("std");
 const npcap_zig = @import("npcap_zig");
 const capture   = npcap_zig.capture;
-const types     = npcap_zig.proto.types;
-const parser    = npcap_zig.proto.parser;
+const proto     = npcap_zig.proto;
 
 pub fn main() !void {
     const allocator = std.heap.c_allocator;
@@ -81,17 +80,19 @@ pub fn main() !void {
         const pkt = cap.nextPacket() orelse continue;
 
         // 5. Decode ETH → IPv4 → TCP
-        const eth = parser.parseEthernet(pkt.data) catch continue;
+        const eth = try proto.eth.parseEthernet(pkt.data);
         if (eth.ether_type != .ipv4) continue;
-        const ip = parser.parseIpv4(eth.payload) catch continue;
+        
+        const ip = try proto.ipv4.parseIpv4(eth.payload);
         if (ip.proto != .tcp) continue;
-        const tcp = parser.parseTcp(ip.payload) catch continue;
+        
+        const tcp = try proto.tcp.parseTcp(ip.payload);
 
         var ib1: [15]u8 = undefined;
         var ib2: [15]u8 = undefined;
-        std.debug.print("TCP  {s}:{d}  →  {s}:{d}  ({d}b)\n", .{
-            types.formatIp(ip.src, &ib1),  tcp.src_port,
-            types.formatIp(ip.dst, &ib2),  tcp.dst_port,
+        std.debug.print("TCP  {s}:{d}  →  {s}:{d}  payload={d}b\n", .{
+            proto.ipv4.formatIp(ip.src, &ib1), tcp.src_port,
+            proto.ipv4.formatIp(ip.dst, &ib2), tcp.dst_port,
             tcp.payload.len,
         });
     }
@@ -104,19 +105,32 @@ pub fn main() !void {
 
 | Layer | Protocol | Function | Return type |
 |---|---|---|---|
-| L2 | Ethernet | `parser.parseEthernet` | `ParseError!EthernetFrame` |
-| L2 | ARP | `parser.parseArp` | `ParseError!ArpPacket` |
-| L3 | IPv4 | `parser.parseIpv4` | `ParseError!Ipv4Header` |
-| L3 | IPv6 | `parser.parseIpv6` | `ParseError!Ipv6Header` |
-| L3 | ICMPv4 | `parser.parseIcmp` | `ParseError!IcmpMessage` |
-| L4 | TCP | `parser.parseTcp` | `ParseError!TcpSegment` |
-| L4 | UDP | `parser.parseUdp` | `ParseError!UdpDatagram` |
-| L7 | DNS | `dns.parseDns` | `ParseError!DnsMessage` |
-| L7 | HTTP/1.x | `http.parseHttp` | `ParseError!HttpMessage` |
-| L7 | HTTP hint | `http.detect` | `?HttpHint` |
+| L2 | Ethernet | `proto.eth.parseEthernet` | `ParseError!EthernetFrame` |
+| L2 | ARP | `proto.arp.parseArp` | `ParseError!ArpPacket` |
+| L3 | IPv4 | `proto.ipv4.parseIpv4` | `ParseError!Ipv4Header` |
+| L3 | IPv6 | `proto.ipv6.parseIpv6` | `ParseError!Ipv6Header` |
+| L4 | ICMPv4 | `proto.icmpv4.parseIcmp` | `ParseError!IcmpMessage` |
+| L4 | ICMPv6 | `proto.icmpv6.parseIcmpv6` | `ParseError!Icmpv6Message` |
+| L4 | TCP | `proto.tcp.parseTcp` | `ParseError!TcpSegment` |
+| L4 | UDP | `proto.udp.parseUdp` | `ParseError!UdpDatagram` |
+| L7 | DNS | `proto.dns.parseDns` | `ParseError!DnsMessage` |
+| L7 | HTTP/1.x | `proto.http.detect` | `?HttpHint` |
 
 All parsers are **pure functions**: no allocator, no I/O, no side effects.
 All string/slice results point into the **original packet buffer** — zero-copy.
+
+---
+
+## TCP Flow Tracking
+
+The library includes a stateful TCP flow tracker that handles normalization (client/server detection) and connection state transitions.
+
+```zig
+const flow = npcap_zig.flow;
+// ... inside capture loop ...
+const status = flow.processTcp(&flow_table, pkt, ip.src, ip.dst, tcp, ip.payload.len);
+// status: "flow=NEW", "flow=ESTABLISHED", "flow=FIN_WAIT", etc.
+```
 
 ---
 
@@ -124,7 +138,7 @@ All string/slice results point into the **original packet buffer** — zero-copy
 
 | File | Build step | Description |
 |---|---|---|
-| [`examples/basic_capture.zig`](examples/basic_capture.zig) | `zig build run` | Full multi-protocol sniffer |
+| [`examples/basic_capture.zig`](examples/basic_capture.zig) | `zig build run` | Full multi-protocol sniffer with flow tracking |
 | [`examples/dns_monitor.zig`](examples/dns_monitor.zig) | `zig build dns_monitor` | BPF-filtered DNS query logger |
 
 ### Building
@@ -138,9 +152,6 @@ zig build dns_monitor
 
 # Build everything without running
 zig build
-
-# Run tests
-zig build test
 ```
 
 ---
@@ -149,19 +160,25 @@ zig build test
 
 ```
 src/
-  root.zig            ← only file downstream users import
-  capture.zig         ← CaptureHandle, listDevices, openDevice, …
-  backend/
-    npcap_raw.zig     ← thin @cImport wrapper for wpcap.dll / Packet.dll
+  root.zig            ← Public API re-exports
+  capture.zig         ← Npcap live/file capture engine
+  packet.zig          ← ParsedPacket and Layer3/4 unions
+  flow/
+    tracker.zig       ← TCP flow tracking state machine
   proto/
-    types.zig         ← all shared types (EthernetFrame, Ipv4Header, …)
-    parser.zig        ← ETH, IPv4, IPv6, TCP, UDP, ARP, ICMP parsers
-    dns.zig           ← DNS message parser (RFC 1035)
-    http.zig          ← HTTP/1.x first-line + Host: header detector
-    ipv6.zig          ← IPv6 fixed-header convenience wrapper
-examples/
-  basic_capture.zig
-  dns_monitor.zig
+    errors.zig        ← Shared parsing error set
+    eth.zig           ← Ethernet II frame parser
+    ipv4.zig          ← IPv4 header parser
+    ipv6.zig          ← IPv6 header + extension headers
+    arp.zig           ← Address Resolution Protocol (ARP)
+    tcp.zig           ← TCP segment parser
+    udp.zig           ← UDP datagram parser
+    icmpv4.zig        ← ICMPv4 message parser
+    icmpv6.zig        ← ICMPv6 / NDP parser
+    dns.zig           ← DNS (RFC 1035) Question/Answer parser
+    http.zig          ← HTTP/1.1 method/host detector
+  backend/
+    npcap_raw.zig     ← Low-level pcap DLL wrapper
 ```
 
 ---
