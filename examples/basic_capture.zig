@@ -212,7 +212,6 @@ fn printPacket(pkt: packet.Packet, n: u32) void {
             },
             _ => {
                 if (is_first) std.debug.print("  [UNKNOWN]\n", .{});
-                std.debug.print("  [DEBUG: HIT CATCH-ALL payload.len={d}]\n", .{payload.len});
                 
                 const unk_frame = proto.eth.EthernetFrame{
                     .src = eth_frame.src,
@@ -324,7 +323,7 @@ fn printIcmpv6(payload: []const u8) void {
     std.debug.print("\n", .{});
 }
 
-fn printTcp(pkt: packet.Packet, ip_src: ?[4]u8, ip_dst: ?[4]u8, payload: []const u8) void {
+fn printTcp(pkt: packet.Packet, ip_src: ?[4]u8, ip_dst: ?[4]u8, payload: []const u8, ip_payload_len: usize) void {
     const tcp_seg = proto.tcp.parseTcp(payload) catch {
         std.debug.print("  [TCP parse error]\n", .{});
         return;
@@ -332,7 +331,7 @@ fn printTcp(pkt: packet.Packet, ip_src: ?[4]u8, ip_dst: ?[4]u8, payload: []const
     
     var flow_status: []const u8 = "";
     if (ip_src != null and ip_dst != null) {
-        flow_status = flow.processTcp(&flow_table, pkt, ip_src.?, ip_dst.?, tcp_seg);
+        flow_status = flow.processTcp(&flow_table, pkt, ip_src.?, ip_dst.?, tcp_seg, ip_payload_len);
     }
 
     std.debug.print("  TCP  :{d} -> :{d}  seq={d}  flags=[{s}{s}{s}{s}{s}]  {s}\n", .{
@@ -422,7 +421,7 @@ fn printIpv4(pkt: packet.Packet, payload: []const u8) void {
     });
     switch (ip.proto) {
         .icmp => printIcmp(ip.payload),
-        .tcp  => printTcp(pkt, ip.src, ip.dst, ip.payload),
+        .tcp  => printTcp(pkt, ip.src, ip.dst, ip.payload, ip.payload.len),
         .udp  => printUdp(ip.payload),
         else  => {},
     }
@@ -443,7 +442,7 @@ fn printIpv6(pkt: packet.Packet, payload: []const u8) void {
     });
     switch (ip6.proto) {
         .icmpv6 => printIcmpv6(ip6.payload),
-        .tcp  => printTcp(pkt, null, null, ip6.payload),
+        .tcp  => printTcp(pkt, null, null, ip6.payload, ip6.payload.len),
         .udp  => printUdp(ip6.payload),
         else  => {},
     }

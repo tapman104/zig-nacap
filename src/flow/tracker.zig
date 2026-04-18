@@ -38,6 +38,8 @@ pub fn processTcp(
     ip_src: [4]u8,
     ip_dst: [4]u8,
     tcp_seg: tcp.TcpSegment,
+    /// IP payload length = TCP header + TCP data (not the Ethernet/IP overhead)
+    ip_payload_len: usize,
 ) []const u8 {
     var flow_status: []const u8 = "";
 
@@ -75,7 +77,7 @@ pub fn processTcp(
 
     var flow = gop.value_ptr;
     flow.packet_count += 1;
-    flow.byte_count += tcp_seg.payload.len;
+    flow.byte_count += ip_payload_len;
     flow.last_seen = pkt.timestamp_us;
 
     // Track per-flow metadata
