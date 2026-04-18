@@ -23,11 +23,23 @@ pub const Packet = struct {
 
 pub const MacAddr = [6]u8;
 
+pub const UnknownEth = struct {
+    ethertype: u16,
+    src: [6]u8,
+    dst: [6]u8,
+    raw: [16]u8,   // first 16 bytes of payload (zero-padded if shorter)
+    raw_len: u8,   // actual bytes available (may be < 16)
+};
+
 pub const EtherType = enum(u16) {
     ipv4 = 0x0800,
     arp  = 0x0806,
     ipv6 = 0x86DD,
     vlan = 0x8100,
+    lldp = 0x88cc,
+    mpls = 0x8847,
+    qinq = 0x88a8,
+    eth_loop = 0x9000,
     _,   // unknown
 };
 

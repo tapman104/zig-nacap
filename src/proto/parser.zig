@@ -166,3 +166,20 @@ pub fn parseIcmpv6(data: []const u8) ParseError!t.Icmpv6Message {
         .payload  = data[4..],
     };
 }
+
+// -- Unknown Ethernet Handler -------------------------------------------------
+
+pub fn parseUnknownEth(eth: t.EthernetFrame) t.UnknownEth {
+    var raw: [16]u8 = undefined;
+    @memset(&raw, 0);
+    const raw_len = @min(eth.payload.len, 16);
+    @memcpy(raw[0..raw_len], eth.payload[0..raw_len]);
+    
+    return .{
+        .ethertype = @intFromEnum(eth.ether_type),
+        .src = eth.src,
+        .dst = eth.dst,
+        .raw = raw,
+        .raw_len = @as(u8, @intCast(raw_len)),
+    };
+}

@@ -14,7 +14,7 @@ const dns       = npcap_zig.proto.dns;
 const http      = npcap_zig.proto.http;
 
 pub const FlowState = enum {
-    UNKNOWN,
+    MID_STREAM,
     SYN_SENT,
     SYN_RCVD,
     ESTABLISHED,
@@ -33,6 +33,8 @@ pub const Flow = struct {
     state: FlowState,
     client_seq: u32,
     server_seq: u32,
+    seen_client: bool,
+    seen_server: bool,
     packet_count: u32,
     byte_count: u64,
     first_seen: u64,
@@ -304,9 +306,11 @@ fn printTcp(pkt: types.Packet, ip_src: ?[4]u8, ip_dst: ?[4]u8, payload: []const 
         if (!gop.found_existing) {
             is_new = true;
             gop.value_ptr.* = Flow{
-                .state = .UNKNOWN,
+                .state = .MID_STREAM,
                 .client_seq = 0,
                 .server_seq = 0,
+                .seen_client = false,
+                .seen_server = false,
                 .packet_count = 0,
                 .byte_count = 0,
                 .first_seen = pkt.timestamp_us,
@@ -315,14 +319,20 @@ fn printTcp(pkt: types.Packet, ip_src: ?[4]u8, ip_dst: ?[4]u8, payload: []const 
         }
         var flow = gop.value_ptr;
         flow.packet_count += 1;
-        flow.byte_count += pkt.original_len;
+        flow.byte_count += payload.len;
         flow.last_seen = pkt.timestamp_us;
         
         // Track per-flow metadata
         if (tcp.src_port == key.client_port) {
             flow.client_seq = tcp.seq;
+            flow.seen_client = true;
         } else {
             flow.server_seq = tcp.seq;
+            flow.seen_server = true;
+        }
+
+        if (flow.state == .MID_STREAM and flow.packet_count >= 2 and flow.seen_client and flow.seen_server) {
+            flow.state = .ESTABLISHED;
         }
 
         // Simplistic flow state machine
@@ -355,7 +365,7 @@ fn printTcp(pkt: types.Packet, ip_src: ?[4]u8, ip_dst: ?[4]u8, payload: []const 
         }
         
         if (flow_status.len == 0) {
-            flow_status = if (is_new) "flow=UNKNOWN" else "flow=UPDATE";
+            flow_status = if (is_new) "flow=MID_STREAM" else "flow=UPDATE";
         }
     }
 
