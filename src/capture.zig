@@ -6,8 +6,7 @@
 
 const std = @import("std");
 const raw = @import("backend/npcap_raw.zig");
-pub const types = @import("proto/types.zig");
-pub const parser = @import("proto/parser.zig");
+pub const packet = @import("packet.zig");
 
 const last_error_capacity = 512;
 var last_error_storage: [last_error_capacity]u8 = [_]u8{0} ** last_error_capacity;
@@ -102,7 +101,7 @@ pub const CaptureHandle = struct {
     pub fn loop(
         self: *CaptureHandle,
         count: i32,
-        comptime callback: fn (pkt: types.Packet) void,
+        comptime callback: fn (pkt: packet.Packet) void,
     ) CaptureError!void {
         clearLastError();
         const Context = struct {
@@ -111,7 +110,7 @@ pub const CaptureHandle = struct {
                 header: *const raw.pcap_pkthdr,
                 data: [*]const u8,
             ) callconv(.C) void {
-                const pkt = types.Packet{
+                const pkt = packet.Packet{
                     .timestamp_us  = @as(u64, @intCast(header.ts.tv_sec)) * 1_000_000 +
                                      @as(u64, @intCast(header.ts.tv_usec)),
                     .data          = data[0..header.caplen],
@@ -130,7 +129,7 @@ pub const CaptureHandle = struct {
     }
 
     /// Single non-blocking poll. Returns null if no packet is available yet.
-    pub fn nextPacket(self: *CaptureHandle) ?types.Packet {
+    pub fn nextPacket(self: *CaptureHandle) ?packet.Packet {
         var header: *raw.pcap_pkthdr = undefined;
         var data: ?[*]const u8 = null;
 
@@ -141,7 +140,7 @@ pub const CaptureHandle = struct {
         }
         if (rc != 1 or data == null) return null;
 
-        return types.Packet{
+        return packet.Packet{
             .timestamp_us = @as(u64, @intCast(header.ts.tv_sec)) * 1_000_000 +
                             @as(u64, @intCast(header.ts.tv_usec)),
             .data         = data.?[0..header.caplen],

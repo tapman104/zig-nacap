@@ -8,9 +8,8 @@
 const std       = @import("std");
 const npcap_zig = @import("npcap_zig");
 const capture   = npcap_zig.capture;
-const types     = npcap_zig.proto.types;
-const parser    = npcap_zig.proto.parser;
-const dns       = npcap_zig.proto.dns;
+const packet    = npcap_zig.packet;
+const proto     = npcap_zig.proto;
 
 pub fn main() !void {
     const allocator = std.heap.c_allocator;
@@ -72,33 +71,33 @@ pub fn main() !void {
 // ── Internal: ETH → IP → UDP → DNS ───────────────────────────────────────────
 // No I/O inside decoders; all printing happens here.
 
-fn processDnsPacket(pkt: types.Packet) void {
-    const eth = parser.parseEthernet(pkt.data) catch return;
+fn processDnsPacket(pkt: packet.Packet) void {
+    const eth = proto.eth.parseEthernet(pkt.data) catch return;
 
     const udp_payload: []const u8 = switch (eth.ether_type) {
         .ipv4 => blk: {
-            const ip = parser.parseIpv4(eth.payload) catch return;
+            const ip = proto.ipv4.parseIpv4(eth.payload) catch return;
             if (ip.proto != .udp) return;
-            const udp = parser.parseUdp(ip.payload) catch return;
+            const udp = proto.udp.parseUdp(ip.payload) catch return;
             break :blk udp.payload;
         },
         .ipv6 => blk: {
-            const ip6 = parser.parseIpv6(eth.payload) catch return;
+            const ip6 = proto.ipv6.parseIpv6(eth.payload) catch return;
             if (ip6.proto != .udp) return;
-            const udp = parser.parseUdp(ip6.payload) catch return;
+            const udp = proto.udp.parseUdp(ip6.payload) catch return;
             break :blk udp.payload;
         },
         else => return,
     };
 
-    const msg = dns.parseDns(udp_payload) catch return;
+    const msg = proto.dns.parseDns(udp_payload) catch return;
     const kind = if (msg.is_response) "reply " else "query ";
 
     var qi: u8 = 0;
     while (qi < msg.question_count) : (qi += 1) {
         const q = &msg.questions[qi];
-        std.debug.print("DNS  {s}  {s}  type={s}\n", .{
-            kind, q.name(), @tagName(q.qtype),
+        std.debug.print("DNS  {s}  {s}  type={d}\n", .{
+            kind, q.name(), @intFromEnum(q.qtype),
         });
     }
 }

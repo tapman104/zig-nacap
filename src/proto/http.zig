@@ -1,12 +1,13 @@
-// -----------------------------------------------------------------------------
-// src/proto/http.zig
-// Lightweight HTTP/1.x sniffer — no allocation, no full parser.
-// Inspects the first line of a TCP payload to classify request vs response.
-// Does not handle chunked encoding, compression, or multi-packet streams.
-// -----------------------------------------------------------------------------
-
 const std = @import("std");
-const t   = @import("types.zig");
+
+pub const HttpHint = struct {
+    /// "GET", "POST", "HTTP/1.1 200" etc. — slice into original packet data.
+    method:      []const u8,
+    /// Value of Host: header if present — slice into original packet data.
+    host:        ?[]const u8,
+    /// true if this looks like a response (starts with "HTTP/").
+    is_response: bool,
+};
 
 pub const ParseError = error{
     TooShort,
@@ -104,7 +105,7 @@ pub fn parseHttp(data: []const u8) ParseError!HttpMessage {
 /// The `method` field holds the entire first request/status line
 /// (e.g. "GET /index.html HTTP/1.1" or "HTTP/1.1 200 OK").
 /// All slices point into the original `data` — zero-copy.
-pub fn detect(data: []const u8) ?t.HttpHint {
+pub fn detect(data: []const u8) ?HttpHint {
     const msg = parseHttp(data) catch return null;
     const eol = std.mem.indexOfScalar(u8, data, '\n') orelse data.len;
     const first_line = std.mem.trimEnd(u8, data[0..eol], "\r");
