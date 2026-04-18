@@ -155,3 +155,14 @@ pub fn parseIcmp(data: []const u8) ParseError!t.IcmpMessage {
     };
 }
 
+// -- ICMPv6 -------------------------------------------------------------------
+
+pub fn parseIcmpv6(data: []const u8) ParseError!t.Icmpv6Message {
+    if (data.len < 4) return error.TooShort;
+    return .{
+        .type_    = @enumFromInt(data[0]),
+        .code     = data[1],
+        .checksum = std.mem.readInt(u16, data[2..4], .big),
+        .payload  = data[4..],
+    };
+}

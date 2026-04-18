@@ -182,6 +182,54 @@ fn printIcmp(payload: []const u8) void {
     std.debug.print("  ICMP type={d} code={d}\n", .{ icmp.type_, icmp.code });
 }
 
+fn printIcmpv6(payload: []const u8) void {
+    const icmp = parser.parseIcmpv6(payload) catch {
+        std.debug.print("  [ICMPv6 parse error]\n", .{});
+        return;
+    };
+    
+    const type_num = @intFromEnum(icmp.type_);
+    const type_str = switch (icmp.type_) {
+        .destination_unreachable => "Destination Unreachable",
+        .packet_too_big => "Packet Too Big",
+        .time_exceeded => "Time Exceeded",
+        .parameter_problem => "Parameter Problem",
+        .echo_request => "Echo Request",
+        .echo_reply => "Echo Reply",
+        .mld_query => "MLD Query",
+        .mld_report => "MLD Report",
+        .mld_done => "MLD Done",
+        .router_solicitation => "RS",
+        .router_advertisement => "RA",
+        .neighbor_solicitation => "NS",
+        .neighbor_advertisement => "NA",
+        .redirect => "Redirect",
+        .mldv2_report => "MLDv2 Report",
+        _ => "unknown",
+    };
+    
+    const is_ndp = switch (icmp.type_) {
+        .router_solicitation, .router_advertisement, .neighbor_solicitation, .neighbor_advertisement, .redirect => true,
+        else => false,
+    };
+    
+    std.debug.print("  ICMPv6 type={d} ({s})", .{ type_num, type_str });
+    
+    if (!is_ndp or icmp.code != 0) {
+        std.debug.print(" code={d}", .{icmp.code});
+    }
+
+    if (icmp.type_ == .neighbor_solicitation or icmp.type_ == .neighbor_advertisement) {
+        if (icmp.payload.len >= 20) {
+            var tb: [39]u8 = undefined;
+            const target_ip = icmp.payload[4..20].*;
+            std.debug.print(" target={s}", .{types.formatIpv6(target_ip, &tb)});
+        }
+    }
+    
+    std.debug.print("\n", .{});
+}
+
 fn printTcp(payload: []const u8) void {
     const tcp = parser.parseTcp(payload) catch {
         std.debug.print("  [TCP parse error]\n", .{});
@@ -269,6 +317,7 @@ fn printIpv6(payload: []const u8) void {
         ip6.hop_limit,
     });
     switch (ip6.proto) {
+        .icmpv6 => printIcmpv6(ip6.payload),
         .tcp  => printTcp(ip6.payload),
         .udp  => printUdp(ip6.payload),
         else  => {},

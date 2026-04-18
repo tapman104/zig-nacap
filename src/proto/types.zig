@@ -158,6 +158,34 @@ pub const IcmpMessage = struct {
     payload: []const u8,
 };
 
+// -- ICMPv6 -------------------------------------------------------------------
+
+pub const Icmpv6Type = enum(u8) {
+    destination_unreachable = 1,
+    packet_too_big = 2,
+    time_exceeded = 3,
+    parameter_problem = 4,
+    echo_request = 128,
+    echo_reply = 129,
+    mld_query = 130,
+    mld_report = 131,
+    mld_done = 132,
+    router_solicitation = 133,
+    router_advertisement = 134,
+    neighbor_solicitation = 135,
+    neighbor_advertisement = 136,
+    redirect = 137,
+    mldv2_report = 143,
+    _,
+};
+
+pub const Icmpv6Message = struct {
+    type_: Icmpv6Type,
+    code: u8,
+    checksum: u16,
+    payload: []const u8,
+};
+
 // -- DNS (lightweight hint types — zero-copy slices into packet data) ----------
 // Full parsed types with name buffers live in proto/dns.zig.
 
