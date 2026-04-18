@@ -55,23 +55,22 @@ pub const DnsRecord = struct {
     rtype:  DnsType,
     rclass: DnsClass,
     ttl:    u32,
-    /// Raw RDATA slice pointing into the original buffer.
-    rdata:  []const u8,
+    
+    // Decoded fields
+    a: ?[4]u8 = null,
+    aaaa: ?[16]u8 = null,
+    cname: ?[253]u8 = null,
+    cname_len: u8 = 0,
 
     pub fn name(self: *const DnsRecord) []const u8 {
         return self.name_buf[0..self.name_len];
     }
 
-    /// If rtype == .a, returns the IPv4 address bytes.
-    pub fn asA(self: *const DnsRecord) ?[4]u8 {
-        if (self.rtype != .a or self.rdata.len < 4) return null;
-        return self.rdata[0..4].*;
-    }
-
-    /// If rtype == .aaaa, returns the IPv6 address bytes.
-    pub fn asAaaa(self: *const DnsRecord) ?[16]u8 {
-        if (self.rtype != .aaaa or self.rdata.len < 16) return null;
-        return self.rdata[0..16].*;
+    pub fn cnameStr(self: *const DnsRecord) []const u8 {
+        if (self.cname) |buf| {
+            return buf[0..self.cname_len];
+        }
+        return "";
     }
 };
 
@@ -141,7 +140,17 @@ pub fn parseDns(data: []const u8) ParseError!DnsMessage {
     const a_limit = @min(ancount, MAX_RECORDS);
     var ai: usize = 0;
     while (ai < a_limit) : (ai += 1) {
-        var rec: DnsRecord = undefined;
+        var rec = DnsRecord{
+            .name_buf = undefined,
+            .name_len = 0,
+            .rtype = undefined,
+            .rclass = undefined,
+            .ttl = 0,
+            .a = null,
+            .aaaa = null,
+            .cname = null,
+            .cname_len = 0,
+        };
         offset = try readName(data, offset, &rec.name_buf, &rec.name_len);
         if (offset + 10 > data.len) return error.TooShort;
         rec.rtype  = @enumFromInt(std.mem.readInt(u16, data[offset..][0..2], .big));
@@ -150,7 +159,29 @@ pub fn parseDns(data: []const u8) ParseError!DnsMessage {
         const rdlen = std.mem.readInt(u16, data[offset + 8 ..][0..2], .big);
         offset += 10;
         if (offset + rdlen > data.len) return error.TooShort;
-        rec.rdata = data[offset .. offset + rdlen];
+        
+        switch (rec.rtype) {
+            .a => {
+                if (rdlen == 4) rec.a = data[offset..][0..4].*;
+            },
+            .aaaa => {
+                if (rdlen == 16) rec.aaaa = data[offset..][0..16].*;
+            },
+            .cname => {
+                var cname_buf: [253]u8 = undefined;
+                var cname_len: u9 = 0;
+                _ = readName(data, offset, &cname_buf, &cname_len) catch |err| {
+                    if (err != error.TruncatedName and err != error.InvalidLabel and err != error.TooManyPointers) return err;
+                    // For anything else, ignore or maybe just don't set cname.
+                };
+                if (cname_len > 0) {
+                    rec.cname = cname_buf;
+                    rec.cname_len = @intCast(cname_len);
+                }
+            },
+            else => {},
+        }
+        
         offset += rdlen;
         msg.answers[ai] = rec;
         msg.answer_count += 1;

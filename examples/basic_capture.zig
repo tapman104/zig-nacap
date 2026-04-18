@@ -13,6 +13,35 @@ const parser    = npcap_zig.proto.parser;
 const dns       = npcap_zig.proto.dns;
 const http      = npcap_zig.proto.http;
 
+pub const FlowState = enum {
+    UNKNOWN,
+    SYN_SENT,
+    SYN_RCVD,
+    ESTABLISHED,
+    FIN_WAIT,
+    CLOSED,
+};
+
+pub const FlowKey = struct {
+    client_ip: [4]u8,
+    server_ip: [4]u8,
+    client_port: u16,
+    server_port: u16,
+};
+
+pub const Flow = struct {
+    state: FlowState,
+    client_seq: u32,
+    server_seq: u32,
+    packet_count: u32,
+    byte_count: u64,
+    first_seen: u64,
+    last_seen: u64,
+};
+
+pub const FlowTable = std.AutoHashMap(FlowKey, Flow);
+var flow_table: FlowTable = undefined;
+
 // ── Windows DLL reachability probe ──────────────────────────────────────────
 // LoadLibraryA mirrors the OS loader search order — the only reliable check.
 extern "kernel32" fn LoadLibraryA(
@@ -62,6 +91,10 @@ pub fn main() !void {
     std.debug.print("[basic_capture] start\n", .{});
 
     const io = std.Io.Threaded.global_single_threaded.io();
+    
+    flow_table = FlowTable.init(allocator);
+    defer flow_table.deinit();
+
     printNpcapDiagnostics(io, allocator);
 
     std.debug.print("Npcap: {s}\n\n", .{capture.version()});
@@ -120,6 +153,20 @@ pub fn main() !void {
         count += 1;
         printPacket(pkt, count);
     }
+
+    std.debug.print("\nFLOWS ({d} active):\n", .{flow_table.count()});
+    var iter = flow_table.iterator();
+    while (iter.next()) |entry| {
+        const k = entry.key_ptr.*;
+        const v = entry.value_ptr.*;
+        var ib1: [15]u8 = undefined;
+        var ib2: [15]u8 = undefined;
+        std.debug.print("  {s}:{d} <-> {s}:{d}  pkts={d}  bytes={d}  state={s}\n", .{
+            types.formatIp(k.client_ip, &ib1), k.client_port,
+            types.formatIp(k.server_ip, &ib2), k.server_port,
+            v.packet_count, v.byte_count, @tagName(v.state),
+        });
+    }
 }
 
 // ── Packet printer ────────────────────────────────────────────────────────────
@@ -143,8 +190,8 @@ fn printPacket(pkt: types.Packet, n: u32) void {
 
     switch (eth.ether_type) {
         .arp  => printArp(eth.payload),
-        .ipv4 => printIpv4(eth.payload),
-        .ipv6 => printIpv6(eth.payload),
+        .ipv4 => printIpv4(pkt, eth.payload),
+        .ipv6 => printIpv6(pkt, eth.payload),
         else  => {},
     }
 
@@ -230,18 +277,96 @@ fn printIcmpv6(payload: []const u8) void {
     std.debug.print("\n", .{});
 }
 
-fn printTcp(payload: []const u8) void {
+fn printTcp(pkt: types.Packet, ip_src: ?[4]u8, ip_dst: ?[4]u8, payload: []const u8) void {
     const tcp = parser.parseTcp(payload) catch {
         std.debug.print("  [TCP parse error]\n", .{});
         return;
     };
-    std.debug.print("  TCP  :{d} -> :{d}  seq={d}  flags=[{s}{s}{s}{s}{s}]\n", .{
+    
+    var flow_status: []const u8 = "";
+    if (ip_src != null and ip_dst != null) {
+        var key = FlowKey{
+            .client_ip = ip_src.?,
+            .server_ip = ip_dst.?,
+            .client_port = tcp.src_port,
+            .server_port = tcp.dst_port,
+        };
+        // Normalize so the lower-port side is client
+        if (tcp.src_port > tcp.dst_port) {
+            key.client_ip = ip_dst.?;
+            key.server_ip = ip_src.?;
+            key.client_port = tcp.dst_port;
+            key.server_port = tcp.src_port;
+        }
+
+        const gop = flow_table.getOrPut(key) catch unreachable;
+        var is_new = false;
+        if (!gop.found_existing) {
+            is_new = true;
+            gop.value_ptr.* = Flow{
+                .state = .UNKNOWN,
+                .client_seq = 0,
+                .server_seq = 0,
+                .packet_count = 0,
+                .byte_count = 0,
+                .first_seen = pkt.timestamp_us,
+                .last_seen = pkt.timestamp_us,
+            };
+        }
+        var flow = gop.value_ptr;
+        flow.packet_count += 1;
+        flow.byte_count += pkt.original_len;
+        flow.last_seen = pkt.timestamp_us;
+        
+        // Track per-flow metadata
+        if (tcp.src_port == key.client_port) {
+            flow.client_seq = tcp.seq;
+        } else {
+            flow.server_seq = tcp.seq;
+        }
+
+        // Simplistic flow state machine
+        if (tcp.flags.syn and !tcp.flags.ack) {
+            flow.state = .SYN_SENT;
+            flow_status = "flow=NEW";
+        } else if (tcp.flags.syn and tcp.flags.ack) {
+            flow.state = .SYN_RCVD;
+            flow_status = "flow=SYN_RCVD";
+        } else if (tcp.flags.fin) {
+            if (flow.state == .FIN_WAIT) {
+                flow.state = .CLOSED;
+            } else {
+                flow.state = .FIN_WAIT;
+            }
+            flow_status = if (flow.state == .CLOSED) "flow=CLOSED" else "flow=FIN_WAIT";
+        } else if (tcp.flags.rst) {
+            flow.state = .CLOSED;
+            flow_status = "flow=CLOSED";
+        } else if (tcp.flags.ack) {
+            if (flow.state == .SYN_RCVD) {
+                flow.state = .ESTABLISHED;
+                flow_status = "flow=ESTABLISHED";
+            } else if (flow.state == .FIN_WAIT) {
+                flow.state = .CLOSED;
+                flow_status = "flow=CLOSED";
+            } else if (flow.state == .ESTABLISHED) {
+                flow_status = "flow=ESTABLISHED";
+            }
+        }
+        
+        if (flow_status.len == 0) {
+            flow_status = if (is_new) "flow=UNKNOWN" else "flow=UPDATE";
+        }
+    }
+
+    std.debug.print("  TCP  :{d} -> :{d}  seq={d}  flags=[{s}{s}{s}{s}{s}]  {s}\n", .{
         tcp.src_port, tcp.dst_port, tcp.seq,
         if (tcp.flags.syn) "S" else "",
         if (tcp.flags.ack) "A" else "",
         if (tcp.flags.fin) "F" else "",
         if (tcp.flags.rst) "R" else "",
         if (tcp.flags.psh) "P" else "",
+        flow_status,
     });
 
     // HTTP hint on port 80 / 8080
@@ -279,10 +404,36 @@ fn printUdp(payload: []const u8) void {
                 kind, q.name(), @tagName(q.qtype),
             });
         }
+        if (msg.is_response and msg.answer_count > 0) {
+            var ai: u8 = 0;
+            while (ai < msg.answer_count) : (ai += 1) {
+                const a = &msg.answers[ai];
+                switch (a.rtype) {
+                    .a => {
+                        if (a.a) |ip| {
+                            var ip_b: [15]u8 = undefined;
+                            std.debug.print("  ANSWER  {s}  A  {s}  ttl={d}\n", .{ a.name(), types.formatIp(ip, &ip_b), a.ttl });
+                        }
+                    },
+                    .aaaa => {
+                        if (a.aaaa) |ip| {
+                            var ip_b: [39]u8 = undefined;
+                            std.debug.print("  ANSWER  {s}  AAAA  {s}  ttl={d}\n", .{ a.name(), types.formatIpv6(ip, &ip_b), a.ttl });
+                        }
+                    },
+                    .cname => {
+                        if (a.cname) |_| {
+                            std.debug.print("  ANSWER  {s}  CNAME  {s}  ttl={d}\n", .{ a.name(), a.cnameStr(), a.ttl });
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
     }
 }
 
-fn printIpv4(payload: []const u8) void {
+fn printIpv4(pkt: types.Packet, payload: []const u8) void {
     const ip = parser.parseIpv4(payload) catch {
         std.debug.print("  [IPv4 parse error]\n", .{});
         return;
@@ -297,13 +448,13 @@ fn printIpv4(payload: []const u8) void {
     });
     switch (ip.proto) {
         .icmp => printIcmp(ip.payload),
-        .tcp  => printTcp(ip.payload),
+        .tcp  => printTcp(pkt, ip.src, ip.dst, ip.payload),
         .udp  => printUdp(ip.payload),
         else  => {},
     }
 }
 
-fn printIpv6(payload: []const u8) void {
+fn printIpv6(pkt: types.Packet, payload: []const u8) void {
     const ip6 = parser.parseIpv6(payload) catch {
         std.debug.print("  [IPv6 parse error]\n", .{});
         return;
@@ -318,7 +469,7 @@ fn printIpv6(payload: []const u8) void {
     });
     switch (ip6.proto) {
         .icmpv6 => printIcmpv6(ip6.payload),
-        .tcp  => printTcp(ip6.payload),
+        .tcp  => printTcp(pkt, null, null, ip6.payload),
         .udp  => printUdp(ip6.payload),
         else  => {},
     }
